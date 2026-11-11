@@ -13,6 +13,7 @@ import html
 import json
 import os
 import re
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
@@ -24,6 +25,10 @@ from processor import extract_yoast_description
 
 UA = {"User-Agent": "healtham-publisher/1.0 (+https://www.health.am)"}
 _token = None
+_token_at = 0.0
+# Payload login sessions expire after 2 hours. The Streamlit app runs for days, so a login is reused
+# for 30 minutes at most, and a save refused with 401/403 signs in again and retries once.
+TOKEN_MAX_AGE = 30 * 60
 _topic_ids = {}
 
 
@@ -37,9 +42,9 @@ def payload_configured() -> bool:
     return bool(os.getenv("HEALTHAM_EMAIL") and os.getenv("HEALTHAM_PASSWORD"))
 
 
-def _login() -> str:
-    global _token
-    if _token:
+def _login(force: bool = False) -> str:
+    global _token, _token_at
+    if _token and not force and time.time() - _token_at < TOKEN_MAX_AGE:
         return _token
     if not payload_configured():
         raise RuntimeError("HEALTHAM_EMAIL / HEALTHAM_PASSWORD are not set.")
@@ -52,7 +57,17 @@ def _login() -> str:
     if res.status_code != 200 or not res.json().get("token"):
         raise RuntimeError(f"Login to {_api()} failed: {res.status_code} - {res.text[:200]}")
     _token = res.json()["token"]
+    _token_at = time.time()
     return _token
+
+
+def _post(path: str, **kwargs) -> requests.Response:
+    """POST with the login token; if the server refuses (401/403, e.g. an expired session), sign in again and retry once."""
+    res = requests.post(f"{_api()}/{path}", headers=_headers(), **kwargs)
+    if res.status_code in (401, 403):
+        _login(force=True)
+        res = requests.post(f"{_api()}/{path}", headers=_headers(), **kwargs)
+    return res
 
 
 def _headers(auth: bool = True) -> dict:
@@ -277,13 +292,13 @@ def upload_image(path: str, title: str):
     ctype = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext, "image/jpeg")
     name = f"{slugify(title)[:70]}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}.{ext}"
     with open(path, "rb") as f:
-        res = requests.post(
-            f"{_api()}/media",
-            files={"file": (name, f, ctype)},
-            data={"_payload": json.dumps({"alt": title})},
-            headers=_headers(),
-            timeout=120,
-        )
+        content = f.read()  # bytes, so a retry can send the file again
+    res = _post(
+        "media",
+        files={"file": (name, content, ctype)},
+        data={"_payload": json.dumps({"alt": title})},
+        timeout=120,
+    )
     if res.status_code not in (200, 201):
         print(f"⚠️ Image upload failed: {res.status_code} - {res.text[:300]}")
         return None
@@ -343,7 +358,7 @@ def publish_payload_post(
         if news:
             doc["sources"] = [{"title": f'{news.get("headline", "")} ({news.get("source", "")})', "url": news.get("link", "")}]
 
-        res = requests.post(f"{_api()}/articles", json=doc, headers=_headers(), timeout=90)
+        res = _post("articles", json=doc, timeout=90)
         if res.status_code not in (200, 201):
             print(f"❌ Publish failed: {res.status_code} - {res.text[:600]}")
             return None
