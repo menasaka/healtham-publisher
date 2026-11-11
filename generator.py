@@ -9,13 +9,17 @@ import site_config as cfg
 load_dotenv()
 
 _client = None
+_client_key = None
 
 
 def _get_client() -> OpenAI:
-    # Created lazily so Streamlit secrets are already loaded into the environment
-    global _client
-    if _client is None:
-        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    # Created lazily so Streamlit secrets are already loaded into the environment, and created again
+    # when the key changes (Streamlit keeps this module loaded after its secrets are edited).
+    global _client, _client_key
+    key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if _client is None or key != _client_key:
+        _client = OpenAI(api_key=key)
+        _client_key = key
     return _client
 
 
