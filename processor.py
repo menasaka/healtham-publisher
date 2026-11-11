@@ -1,13 +1,47 @@
+import html
+import os
 import re
 import random
+import time
+
+import requests
 
 import site_config as cfg
 
-# All shortcodes, keywords and links come from site_config.py
+# Shortcodes, keywords and the fallback links come from site_config.py
 SHORTCODES_LIST = cfg.SHORTCODES_LIST
 KEYWORDS_TO_BOLD = cfg.KEYWORDS_TO_BOLD
 INTERNAL_LINKS = cfg.INTERNAL_LINKS
 FALLBACK_LINK_SENTENCE = cfg.FALLBACK_LINK_SENTENCE
+
+_links_cache = {"at": 0.0, "links": None}
+
+
+def get_internal_links() -> list:
+    """
+    The links articles may use, edited in the health.am admin (Site settings > Article links).
+    Read from the site's public API, re-read every 5 minutes; site_config.INTERNAL_LINKS is the
+    fallback when the site cannot be reached or the list is empty.
+    """
+    if _links_cache["links"] is not None and time.time() - _links_cache["at"] < 300:
+        return _links_cache["links"]
+    links = []
+    try:
+        api = os.getenv("PAYLOAD_API_URL", cfg.PAYLOAD_API_URL).rstrip("/")
+        res = requests.get(f"{api}/globals/site-settings", params={"depth": 0},
+                           headers={"User-Agent": "healtham-publisher/1.0"}, timeout=20)
+        res.raise_for_status()
+        for row in res.json().get("articleLinks") or []:
+            url = str(row.get("url") or "").strip()
+            keywords = [k.strip() for k in str(row.get("keywords") or "").split(",") if k.strip()]
+            if url and keywords:
+                links.append({"keywords": keywords, "html": f'<a href="{html.escape(url, quote=True)}">{html.escape(keywords[0])}</a>'})
+    except Exception as e:
+        print(f"Notice: could not read Article links from the site ({e}); using the built-in list.")
+    if not links:
+        links = list(cfg.INTERNAL_LINKS)
+    _links_cache.update(at=time.time(), links=links)
+    return links
 
 H2_RE = r'<h2\b[^>]*>.*?</h2>'
 
@@ -145,7 +179,7 @@ def inject_internal_links(content: str, target_count: int = None) -> str:
     if target_count is None:
         target_count = random.choice([3, 4])
 
-    shuffled_links = list(INTERNAL_LINKS)
+    shuffled_links = list(get_internal_links())
     random.shuffle(shuffled_links)
 
     links_injected = 0

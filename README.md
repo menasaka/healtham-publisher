@@ -17,7 +17,7 @@ Every article gets:
 - question-based H2 headings: the site turns them into the **"On this page"** menu and the **FAQPage schema** (no separate FAQ block, so nothing is repeated);
 - 4–5 **key points** (the box at the top of the article);
 - a featured image (free CC0 stock photo with the title on it);
-- 3–4 internal links to health.am health centers;
+- 3–4 links from the list in the health.am admin (**Site settings › Article links**: address + keywords; the built-in list in `site_config.py` is only a fallback);
 - a meta description (SEO tab) and excerpt;
 - Medical review status **"Not reviewed"** (until a person reviews it);
 - for news articles: the news report as the article's **source** (shown under the article).
