@@ -1,0 +1,58 @@
+name: health.am daily news autopilot
+
+# GitHub cron runs in UTC, and GitHub may start scheduled runs late or skip them.
+# So this runs every hour from 8/9am to 5/6pm California time (PST or PDT), and
+# autopublish.py publishes whichever slot (9am, 2pm) is due but not done yet.
+# Most runs just print "already done" and stop after a few seconds.
+# If scheduled runs stop (e.g. after changing repo visibility), push any commit to main
+# so GitHub registers the schedule again.
+on:
+  schedule:
+    - cron: "23 0,1,16-23 * * *"
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "Publish now as slot 1 (9am) or 2 (2pm). Leave empty to follow the clock."
+        required: false
+        default: ""
+      dry_run:
+        description: "Only pick a headline, don't publish"
+        type: boolean
+        default: false
+
+concurrency:
+  group: autopublish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install packages
+        run: pip install openai requests Pillow python-dotenv
+
+      - name: Run auto-publisher
+        env:
+          # Either one combined secret named AUTOMATION (lines like KEY = "value"),
+          # or separate secrets with the names below.
+          AUTOMATION: ${{ secrets.AUTOMATION }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          # health.am admin login (Payload CMS)
+          HEALTHAM_EMAIL: ${{ secrets.HEALTHAM_EMAIL }}
+          HEALTHAM_PASSWORD: ${{ secrets.HEALTHAM_PASSWORD }}
+          INPUT_SLOT: ${{ github.event.inputs.slot }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          ARGS=""
+          case "$INPUT_SLOT" in 1|2) ARGS="$ARGS --slot $INPUT_SLOT" ;; esac
+          if [ "$INPUT_DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          python autopublish.py $ARGS
