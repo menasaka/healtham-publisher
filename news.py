@@ -12,13 +12,50 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 import requests
 
 import site_config as cfg
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; healtham-publisher/1.0)"}
+BROWSER_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"}
+
+
+def resolve_google_news_url(link: str) -> str:
+    """
+    Google News RSS items link to news.google.com/rss/articles/<id>, not to the publisher. Returns the
+    real article address (Google's own "batchexecute" lookup, as news.google.com does in the browser),
+    the link itself if it is not a Google News link, or "" if it cannot be resolved (then the article
+    lists the source without a link rather than a Google one).
+    """
+    m = re.search(r"news\.google\.com/(?:rss/)?(?:articles|read)/([^?/#]+)", link or "")
+    if not m:
+        return link or ""
+    gid = m.group(1)
+    try:
+        page = requests.get(f"https://news.google.com/articles/{gid}", headers=BROWSER_HEADERS, timeout=20)
+        sg = re.search(r'data-n-a-sg="([^"]+)"', page.text)
+        ts = re.search(r'data-n-a-ts="([^"]+)"', page.text)
+        if not (sg and ts):
+            raise ValueError("signature not found on the Google News page")
+        inner = ["garturlreq", [["X", "X", ["X", "X"], None, None, 1, 1, "US:en", None, 1, None, None, None, None, None, 0, 1],
+                                "X", "X", 1, [1, 1, 1], 1, 1, None, 0, 0, None, 0], gid, int(ts.group(1)), sg.group(1)]
+        payload = [[["Fbv4je", json.dumps(inner), None, "generic"]]]
+        res = requests.post(
+            "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+            headers={**BROWSER_HEADERS, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+            data="f.req=" + quote(json.dumps(payload)),
+            timeout=20,
+        )
+        res.raise_for_status()
+        url = json.loads(json.loads(res.text.split("\n\n", 1)[-1])[0][2])[1]
+        if not str(url).startswith("http") or "news.google.com" in url:
+            raise ValueError(f"unexpected answer: {str(url)[:80]}")
+        return url
+    except Exception as e:
+        print(f"Notice: could not resolve the Google News link ({e}); the source is listed without a link.")
+        return ""
 
 
 def fetch_google_news(query: str = None, when: str = None) -> list:

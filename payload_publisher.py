@@ -356,7 +356,11 @@ def publish_payload_post(
             doc["mainImage"] = media_id
             doc["mainImageAlt"] = title
         if news:
-            doc["sources"] = [{"title": f'{news.get("headline", "")} ({news.get("source", "")})', "url": news.get("link", "")}]
+            # The publisher's own address, not the Google News redirect (site shows it with rel="nofollow").
+            from news import resolve_google_news_url
+            source_url = resolve_google_news_url(news.get("link", ""))
+            print(f"🔗 Source: {source_url or '(no link)'}")
+            doc["sources"] = [{"title": f'{news.get("headline", "")} ({news.get("source", "")})', "url": source_url}]
 
         res = _post("articles", json=doc, timeout=90)
         if res.status_code not in (200, 201):
